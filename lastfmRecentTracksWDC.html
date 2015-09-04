@@ -1,0 +1,117 @@
+<html>
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <head>
+        <title>Reddit WDC</title>
+        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js" type="text/javascript"></script>
+        <script src="js/tableauwdc-1.1.0.js" type="text/javascript"></script>
+        <script type="text/javascript">
+         (function() {
+            // LastFM - Recent Tracks WebDataConnector for Tableau 9.1 beta
+            // Written by Justin Dallal for Tableau hackathon
+            // TODO:  
+            // --Instead of downloading by most recent plays, allow user to break down by date
+            // --Figure out why >5k results doesn't work.  WDC API limit?  
+            // --Support artist metadata downloading:
+            // ----Get artist genre
+            // ----Cache artist if we need to requery
+            // ----Count API calls over time to avoid spamming
+            // --Suppert getTopTracks (http://www.last.fm/api/show/user.getTopTracks)
+            // ----Allows more net data to be downloaded
+            // ----Be less granular == we can download more data
+         
+            var myConnector = tableau.makeConnector();
+            var apiKey = ""; // FILL ME IN
+
+            myConnector.getColumnHeaders = function() {
+        	    var fieldNames = ['Track Title',   'Album',    'Artist',   'Date'];
+        	    var fieldTypes = ['string',        'string',   'string',   'date'];
+        	    tableau.headersCallback(fieldNames, fieldTypes);
+            };
+
+            var resultsCompleted = 0; // stupid ugly hack.  I'm not proud of this.  
+
+            function getJSON(userName, numTracks, continueGettingData)
+            {
+                $.getJSON("http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" + userName + "&api_key=" + apiKey + "&format=json&limit=" + numTracks + "&page=" + (resultsCompleted / numTracks), function(rd)
+                {
+                	var results = [];
+                    $.each(rd.recenttracks.track, function(k, v)
+                    {
+                        if(v.date == undefined)
+                            return;    // We're likely currently playing this track.  There's also a bug in the API
+                                       // where each page returns the currently playing track at the top.  Skip it.
+
+                        // We have to get dates into a format parsable by ICU.  We're going to ignore time
+                        // and just use days, since the goal of this is listening trends over long periods of time
+                        var entry = {
+                            "Track Title": v.name,
+                            "Album": v.album["#text"],
+                            "Artist": v.artist["#text"],
+                            "Date": new Date(Date.parse(v.date["#text"])).toISOString().split("T")[0]
+                        }
+                        results.push(entry)
+                        
+                    });
+
+                    tableau.dataCallback(results, resultsCompleted, continueGettingData);
+                });        
+            }
+
+            myConnector.getTableData = function(lastRecordToken) 
+            {
+                var connectionData = JSON.parse(tableau.connectionData);
+                var numTracks = connectionData["resultsRequested"];
+                resultsCompleted += 1000;
+                getJSON(connectionData["userName"], 1000, numTracks - resultsCompleted > 0);
+            };
+
+            myConnector.setLastfmData = function(userName, resultsRequested) 
+            {
+                // We are using tableau.connectionData to pass information around and maintain context without worrying about scope
+                var connectionData = {"userName": userName, "resultsRequested": resultsRequested};
+                tableau.connectionData = JSON.stringify(connectionData); 
+                tableau.connectionName = 'Listening data for: ' + userName;
+            };
+
+            tableau.registerConnector(myConnector);
+
+            $(document).ready(function() 
+            {
+                $("#submitButton").click(function() 
+                {   
+                    var subreddit = $('#userName').val().trim();
+                    var resultsRequested = parseInt($("#trackCount").val(), 10);
+                    if (subreddit) 
+                    {
+                        myConnector.setLastfmData(subreddit, resultsRequested);
+                        tableau.submit();
+                    }
+                });
+            });
+
+        })();
+        </script>
+    </head>
+
+    <body>
+        <form>
+            <p>LastFM Data Grabber.</p>
+            
+            Input user name(s): 
+            <input type="text" style="width: 500px;" id="userName" value="kypen"/> 
+            <br />
+            
+            Number of tracks to analyze
+            <select id="trackCount">
+                <option value="1000">1000</option>
+                <option value="3000">3000</option>
+                <option value="5000">5000</option>
+                <!--option value="10000">10000</option-->
+            </select>
+
+            <br />
+            <br />
+            <button type="button" id="submitButton">Get Listening Data</button> 
+        </form>
+    </body>
+</html>
